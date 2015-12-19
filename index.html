@@ -1,1 +1,84 @@
-nswtopo.com
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>nswtopo</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <link rel="stylesheet" type="text/css" href="nswtopo.css">
+    <link rel="alternate" type="application/vnd.geo+json" href="maps.json">
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBO8NzpcnKwSJK3XsMkKAz2-E3l03d9T7U&callback=initMap"></script>
+    <script async defer src="nswtopo.js"></script>
+    <script>
+      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+      ga('create', 'UA-71599427-1', 'auto');
+      ga('send', 'pageview');
+    </script>
+  </head>
+  <body>
+    <div id="map"></div>
+    <div id="title"></div>
+    <div id="select">
+      <div id="toggles"><div id="show-about">About</div></div>
+    </div>
+    <div id="about" class="hidden">
+      <div class="box">
+        <div>
+          <header>
+            <h1>
+              nswtopo
+            </h1>
+            <p>
+              vector topo maps for NSW and Tasmania
+            </p>
+          </header>
+          <p>
+            <em>nswtopo</em> is open-source software for creating detailed topographic maps of New South Wales and Tasmania.
+            Maps can be made in both vector and raster formats.
+          </p>
+          <section>
+            <h2>
+              <img src="logo-github.png" class="logo" alt="GitHub logo">Get the Code
+            </h2>
+            <p>
+              Code for <em>nswtopo</em> is available on <a href="https://github.com/mholling/nswtopo">GitHub</a>.
+            </p>
+            <p>
+              Make maps of any areas you want using the lastest government topographic data.
+              Add extra layers such as shaded relief, grid lines and your own GPS data.
+            </p>
+          </section>
+          <section>
+            <h2>
+              <img src="logo-pdfmaps.png" class="logo" alt="PDF Maps logo">Maps for Mobile
+            </h2>
+            <p>
+              Messing with software isn't for everyone.
+              If you just need some quick topos for your phone or tablet, <em>nswtopo</em> has you covered.
+            </p>
+            <p>
+              First, grab the free <em>Avenza PDF Maps</em> app for your
+              <a href="https://itunes.apple.com/ca/app/avenza-pdf-maps/id388424049?mt=8">iOS</a>
+              or
+              <a href="https://play.google.com/store/apps/details?id=com.Avenza">Android</a>
+              device.
+            </p>
+            <p>
+              Then use this site to find the maps you need.
+              Click or tap the maps to purchase them from the App Store or Google Play.
+              Download the maps to your device and you're good to go.
+            </p>
+            <p>
+              Maps for NSW cover the eastern half of the state at scales of 1:25&nbsp;000 and 1:50&nbsp;000.
+              Tasmanian maps cover the whole state at a scale of 1:25&nbsp;000.
+              The map sets correspond to the official LPI and TASMAP series.
+            </p>
+          </section>
+        </div>
+      </div>
+      <div id="close">&#x2715;</div>
+    </div>
+  </body>
+</html>

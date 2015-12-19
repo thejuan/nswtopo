@@ -1,0 +1,128 @@
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+#map {
+  height: 100%;
+}
+#title {
+  position: absolute;
+  bottom: 25px;
+  margin: 25px auto;
+  left: 0;
+  right: 0;
+  width: 100%;
+  text-align: center;
+}
+#title span {
+  border-radius: 5px;
+  font-family: Roboto, Arial, sans-serif;
+  font-size: 12pt;
+  background-color: white;
+  opacity: 0.75;
+  padding: 0.5em 1em;
+}
+#select {
+  font-family: Roboto, Arial, sans-serif;
+  margin: 10px;
+  cursor: pointer;
+  text-align: center;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+}
+#toggles {
+  background-color: white;
+  border-radius: 2px;
+  box-shadow: rgba(0, 0, 0, 0.3) 0px 1px 4px -1px;
+  position: relative;
+}
+#toggles div {
+  padding: 8px;
+  display: inline-block;
+  text-align: left;
+  border-right-width: 1px;
+  border-right-style: solid;
+  border-right-color: #EBEBEB;
+  color: #565656;
+}
+#toggles div:hover {
+  background: #ebebeb;
+}
+#toggles div.selected {
+  font-weight: 500;
+  box-shadow: inset rgba(0, 0, 0, 0.5) 2px 2px 3px -2px;
+  color: black;
+}
+#toggles #show-25k.selected {
+  color: #FF0000;
+}
+#toggles #show-50k.selected {
+  color: #0000FF;
+}
+#about {
+  position: absolute;
+  margin: auto;
+  max-width: 600px;
+  top: 60px;
+  bottom: 130px;
+  left: 0;
+  right: 0;
+  padding-bottom: 40px;
+  font-family: Roboto, Arial, sans-serif;
+  font-size: 12pt;
+}
+#about>div.box {
+  margin: 0 20px;
+  height: 100%;
+  padding: 30px;
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 10px;
+}
+#about>div.box>div {
+  height: 100%;
+  color: black;
+  overflow-y: auto;
+}
+#about.hidden {
+  visibility: hidden;
+}
+#about h1, #about h2 {
+  color: #444444;
+  letter-spacing: 0.02em;
+}
+#about header h1 {
+  font-size: 2.8em;
+  margin: 0;
+}
+#about header p {
+  margin: 0.3em 0 1.2em;
+  font-size: 1.2em;
+  color: #666666;
+}
+#about h2 {
+  font-size: 1.8em;
+  margin: 1.2em 0 0.6em;
+}
+#about h2 .logo {
+  height: 0.8em;
+  margin-right: 0.4em;
+}
+#about p {
+  margin: 1em 0;
+}
+#close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  margin-right: 30px;
+  margin-top: 8px;
+  cursor: pointer;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  color: #888888;
+  font-size: 120%;
+}
+#close:hover {
+  color: #444444;
+}
