@@ -37,6 +37,17 @@ $ gdalinfo --version
 ```
 
 Each program should return version information if it's installed correctly.
+## Docker
+* [Install Docker](https://docs.docker.com/engine/installation/) for your OS
+* Download the [Dockerfile](Dockerfile) to a temporary directory
+
+From the same directory where the Dockerfile is run
+
+    docker build -t nswtopo .
+
+To run the script use the following command (replace /tmp/data with the path to the directory where your config resides)
+
+    docker run -it -v /tmp/data:/data nswtopo
 
 ## Windows
   * A complete Ruby installation for Windows can be [downloaded here](https://rubyinstaller.org) (be sure to select `Add Ruby executables to your PATH` when installing).
@@ -165,13 +176,13 @@ The following workflow is suggested to create a rogaine map.
     $ nswtopo config --chrome "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
     ```
 
-1.  Set out the expected bounds of your course using the polygon tool in Google Earth, saving it as `bounds.kml`. Use a partially transparent style to make it easier to see. Configure a new map file with these bounds:
+2.  Set out the expected bounds of your course using the polygon tool in Google Earth, saving it as `bounds.kml`. Use a partially transparent style to make it easier to see. Configure a new map file with these bounds:
 
     ```sh
     $ nswtopo init --bounds bounds.kml preliminary.tgz
     ```
 
-1.  Add the base topographic layers and a grid:
+3.  Add the base topographic layers and a grid:
 
     ```sh
     $ nswtopo add preliminary.tgz nsw/vegetation-spot5
@@ -179,25 +190,25 @@ The following workflow is suggested to create a rogaine map.
     $ nswtopo grid preliminary.tgz
     ```
 
-1.  Download digital elevation model (DEM) tiles for your area from the [ELVIS](http://elevation.fsdf.org.au/) website. Various DEM resolutions will be available depending on location. Prefer 2m and 5m tiles from NSW, with 1m ACT and NSW tiles if needed. Add contours to your map from this data:
+4.  Download digital elevation model (DEM) tiles for your area from the [ELVIS](http://elevation.fsdf.org.au/) website. Various DEM resolutions will be available depending on location. Prefer 2m and 5m tiles from NSW, with 1m ACT and NSW tiles if needed. Add contours to your map from this data:
 
     ```sh
     $ nswtopo contours -i 5 -x 50 --replace nsw.topographic.contours preliminary.tgz DATA_25994.zip
     ```
 
-1.  Create and view your preliminary map:
+5.  Create and view your preliminary map:
 
     ```sh
     $ nswtopo render preliminary.tgz svg tif
     ```
 
-1.  Use the preliminary map to assist you in setting your rogaine. I recommend using a mobile mapping app such as [Avenza Maps](https://www.avenza.com/avenza-maps), [Locus Map](https://www.locusmap.eu) or [Galileo Maps/Guru Maps](https://galileo-app.com). Save in the *tif* or *zip* format for Avenza Maps, or *mbtiles* format for Locus or Guru. During setting, use the app (or a handheld GPS unit) to record waypoints for the locations you flag.
+6.  Use the preliminary map to assist you in setting your rogaine. I recommend using a mobile mapping app such as [Avenza Maps](https://www.avenza.com/avenza-maps), [Locus Map](https://www.locusmap.eu) or [Galileo Maps/Guru Maps](https://galileo-app.com). Save in the *tif* or *zip* format for Avenza Maps, or *mbtiles* format for Locus or Guru. During setting, use the app (or a handheld GPS unit) to record waypoints for the locations you flag.
 
-1.  Use Google Earth to finalise your control locations. Name each waypoint with its control number. Add extra waypoints named *HH* (hash house), *W* (water drop) and *ANC* (all-night cafe), as appropriate. Save the waypoints as a `controls.kml` file.
+7.  Use Google Earth to finalise your control locations. Name each waypoint with its control number. Add extra waypoints named *HH* (hash house), *W* (water drop) and *ANC* (all-night cafe), as appropriate. Save the waypoints as a `controls.kml` file.
 
-1.  Again in Google Earth, mark out any boundaries and out-of-bounds areas using the polygon tool. Style them as they should appear on your map: I recommend *filled black 30%*. Save the boundaries as a `boundaries.kml` file.
+8.  Again in Google Earth, mark out any boundaries and out-of-bounds areas using the polygon tool. Style them as they should appear on your map: I recommend *filled black 30%*. Save the boundaries as a `boundaries.kml` file.
 
-1.  Create a new map with your desired dimensions:
+9.  Create a new map with your desired dimensions:
 
     ```sh
     $ nswtopo init --bounds controls.kml --dimensions 210,297 --rotation magnetic rogaine.tgz
@@ -205,7 +216,7 @@ The following workflow is suggested to create a rogaine map.
 
     If you have trouble fitting your controls to the map sheet, you can use the automatic rotation feature (`--rotation auto`) to minimise the map area.
 
-1.  Add all your layers:
+10. Add all your layers:
 
     ```sh
     $ nswtopo add rogaine.tgz nsw/vegetation-spot5
@@ -218,7 +229,7 @@ The following workflow is suggested to create a rogaine map.
     $ nswtopo controls rogaine.tgz controls.kml
     ```
 
-1.  Optionally, you can add any unmarked tracks you've found on the course. Trace them out with Google Earth, or record them with a GPS or phone while setting. Then add them to your map:
+11. Optionally, you can add any unmarked tracks you've found on the course. Trace them out with Google Earth, or record them with a GPS or phone while setting. Then add them to your map:
 
     ```sh
     $ nswtopo overlay --stroke "#FF7518" --stroke-width 0.3 --stroke-dasharray 1.8,0.6 rogaine.tgz unmarked.kml
@@ -226,7 +237,7 @@ The following workflow is suggested to create a rogaine map.
 
     (Use the `--simplify` option for tracks recorded with a GPS.)
 
-1.  At this point you will need to render the map before adding peripheral information such as a map title, credits, safety information and control descriptions. There are two ways to do this:
+12. At this point you will need to render the map before adding peripheral information such as a map title, credits, safety information and control descriptions. There are two ways to do this:
 
     1.  Render the map to a high-resolution raster and make the edits in a raster graphics editor such as *Photoshop* or [*GIMP*](https://www.gimp.org). First choose a print resolution (say 600 ppi) to render the map in PNG format:
 
@@ -236,7 +247,7 @@ The following workflow is suggested to create a rogaine map.
 
         Open the PNG in the graphics editor, then add your information layers there. Export directly (usually in TIFF format) for sending to the printers.
 
-    1.  Keep the map in vector (SVG) format and make your edits in a vector graphics editor such as [*Inkscape*](https://inkscape.org).
+    2.  Keep the map in vector (SVG) format and make your edits in a vector graphics editor such as [*Inkscape*](https://inkscape.org).
 
         ```sh
         $ nswtopo render rogaine.tgz rogaine.svg
