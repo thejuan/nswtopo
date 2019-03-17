@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 
-# Copyright 2011-2016 Matthew Hollingworth
+# Copyright 2011-2019 Matthew Hollingworth
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -15,15 +15,416 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-require_relative "../lib/nswtopo.rb"
-
-start = Time.now
 begin
-  NSWTopo.run
+  require 'open3'
+  require 'optparse'
+  require 'pathname'
+  require 'etc'
+  require 'yaml'
+  require 'rdoc'
+  require_relative '../lib/nswtopo.rb'
+  require_relative '../lib/nswtopo/help_formatter.rb'
+
+  extend NSWTopo::Log
+  Thread::report_on_exception = false
+
+  GDAL_VERSION = begin
+    stdout, * = Open3.capture3 "gdalinfo", "--version"
+    stdout[/\d+(?:\.\d+){1,2}/]
+  rescue Errno::ENOENT
+    log_abort "GDAL not installed"
+  end
+
+  case
+  when (RUBY_VERSION.split(/\D+/).take(3).map(&:to_i) <=> [2,5]) < 0
+    log_abort "ruby 2.5 or greater required"
+  when !Zlib.const_defined?(:GzipFile)
+    log_abort "ruby with GZIP_SUPPORT required"
+  when (GDAL_VERSION.split(/\D+/).take(3).map(&:to_i) <=> [2,3]) < 0
+    log_abort "GDAL 2.3 or greater required"
+  end
+
+  digits = '\d+(?:_\d+)*'
+  float  = "[-+]?(?:#{digits}(?=(.)?)(?:\\.(?:#{digits})?)?|\\.#{digits})(?:[eE][-+]?#{digits})?"
+  coords = "#{float},#{float}"
+
+  PositiveInt   = /\A#{digits}\z/
+  PositiveFloat = /\A#{float}\z/
+  NonNegFloat   = 0..Float::INFINITY
+  Dimensions    = /\A#{float},#{float}\z/
+  Margins       = /\A#{float}(?:,#{float})?\z/
+  CoordList     = /\A#{coords}(?:,#{coords})*\z/
+  Rotation      = /\A(?:#{float}|magnetic|auto)\z/
+  AltitudeAngle = 0..90
+  Opacity       = /\A#{float}%?\z/
+  DashArray     = /\A#{float}(?:(?:,#{float})*|(?: #{float})*)\z/
+
+  OptionParser.accept PositiveInt, PositiveInt do |string|
+    raise OptionParser::InvalidArgument, string unless string.to_i.positive?
+    string.to_i
+  end
+
+  OptionParser.accept PositiveFloat, PositiveFloat do |string|
+    raise OptionParser::InvalidArgument, string unless string.to_f.positive?
+    string.to_f
+  end
+
+  OptionParser.accept NonNegFloat, PositiveFloat do |string|
+    raise OptionParser::InvalidArgument, string if string.to_f.negative?
+    string.to_f
+  end
+
+  OptionParser.accept Dimensions, Dimensions do |string|
+    dimensions = string.split(?,).map(&:to_f)
+    raise OptionParser::InvalidArgument, string unless dimensions.all?(&:positive?)
+    dimensions
+  end
+
+  OptionParser.accept Margins, Margins do |string|
+    margins = string.split(?,).map(&:to_f)
+    raise OptionParser::InvalidArgument, string if margins.any?(&:negative?)
+    margins.one? ? margins * 2 : margins
+  end
+
+  OptionParser.accept CoordList, CoordList do |string|
+    string.split(?,).map(&:to_f).each_slice(2).to_a
+  end
+
+  OptionParser.accept Rotation, Rotation do |string|
+    "magnetic" == string ? string : "auto" == string ? string : string.to_f
+  end
+
+  OptionParser.accept AltitudeAngle, PositiveFloat do |string|
+    raise OptionParser::InvalidArgument, string unless AltitudeAngle === string.to_f
+    string.to_f
+  end
+
+  OptionParser.accept Pathname do |string|
+    path = Pathname(string).expand_path
+    raise OptionParser::InvalidArgument, string unless path.exist?
+    path
+  end
+
+  OptionParser.accept Colour do |string|
+    string == "none" ? string : Colour.new(string.downcase).to_s
+  rescue Colour::Error
+    raise OptionParser::InvalidArgument, string
+  end
+
+  OptionParser.accept Opacity, Opacity do |string|
+    opacity = string.end_with?(?%) ? Float(string.chomp ?%) * 0.01 : Float(string)
+    raise OptionParser::InvalidArgument, string unless (0..1) === opacity
+    opacity
+  end
+
+  OptionParser.accept DashArray, DashArray do |string|
+    values = string.split(/[, ]/).map(&:to_f)
+    raise OptionParser::InvalidArgument, string if values.any?(&:negative?)
+    values.join ?\s
+  end
+
+  ansi = lambda do |string|
+    string.to_s.gsub(/\*([-a-zA-Z0-9]+)\*/) do
+      "\e[1m%s\e[0m" % $1
+    end.gsub(/_([-a-zA-Z0-9]+)_/) do
+      "\e[4m%s\e[0m" % $1
+    end.gsub(/~([-a-zA-Z0-9]+)~/) do
+      "\e[3m%s\e[0m" % $1
+    end
+  end
+
+  plain = lambda do |string|
+    string.to_s.gsub(/\*([-a-zA-Z0-9]+)\*/) { $1 }.gsub(/_([-a-zA-Z0-9]+)_/) { $1 }.gsub(/~([-a-zA-Z0-9]+)~/) { $1 }
+  end
+
+  base_parser = OptionParser.new do |parser|
+    parser.separator "  options:"
+    parser.banner = <<~EOF
+      *nswtopo* - download and create vector topographic maps
+        usage: _nswtopo_ [~options~] [<command> ...]
+        commands:
+          init          initialise map bounds and scale
+          info          display map layers and metadata
+          add           add named map layer
+          contours      add contours from elevation data
+          spot-heights  add spot heights from elevation data
+          relief        add shaded relief
+          grid          add UTM grid
+          declination   add magnetic declination lines
+          controls      add rogaine control markers
+          overlay       add KML or GPX overlay
+          delete        delete map layer
+          render        render map in various formats
+          layers        list available map layers
+          config        configure nswtopo
+        command help: _nswtopo_ <command> --help
+    EOF
+    parser.on "-v", "--version",                   "show version information" do
+      puts NSWTopo::VERSION
+      exit
+    end
+    parser.on "-q", "--quiet",                     "suppress non-error output" do
+      $stdout = File.open(File::NULL, "w")
+    end
+    parser.on "-c", "--config   <path>", Pathname, "load extra configuration" do |path|
+      NSWTopo::Config.extra_path = path
+    end
+    parser.on "-h", "--help",                      "show general help" do
+      puts $stdout.tty? ? ansi[parser] : plain[parser]
+      doc = Pathname(__dir__).parent / "docs" / "README.md"
+      puts nil, RDoc::Markdown.parse(doc.read encoding: Encoding::UTF_8).accept(HelpFormatter.new $stdout.tty?)
+      exit
+    end
+  end
+  base_parser.order!
+
+  command, options = ARGV.shift, Hash.new
+  command_parser = OptionParser.new do |parser|
+    parser.separator "  options:"
+
+    case command
+    when "init"
+      parser.banner = <<~EOF
+        *nswtopo* *init* - initialise map bounds and scale
+          usage: _nswtopo_ _init_ [~options~] <map.tgz>
+      EOF
+      parser.on "-s", "--scale       <scale>",        PositiveInt,  "scale of map (default 25000)"
+      parser.on "-b", "--bounds      <bounds.kml>",   Pathname,     "bounds for map as KML or GPX file"
+      parser.on "-c", "--coords      <x1,y1,...>",    CoordList,    "bounds for map as one or more WGS84",
+                                                                    "longitude/latitude pairs" 
+      parser.on "-d", "--dimensions  <width,height>", Dimensions,   "dimensions of map in mm"
+      parser.on "-m", "--margins     <x[,y]>",        Margins,      "map margins in mm"
+      parser.on "-r", "--rotation    <rotation>",     Rotation,     "map rotation angle in clockwise",
+                                                                    "degrees, 'auto' or 'magnetic'"
+      parser.on "-o", "--overwrite",                                "overwrite existing map file"
+
+    when "info"
+      parser.banner = <<~EOF
+        *nswtopo* *info* - display map layers and metadata
+        usage: _nswtopo_ _info_ [~options~] <map.tgz>
+      EOF
+      parser.on "-e", "--empty", "show empty layers"
+
+    when "add"
+      parser.banner = <<~EOF
+        *nswtopo* *add* - add named map layer
+          usage: _nswtopo_ _add_ [~options~] <map.tgz> <layer> [<layer> ...]
+      EOF
+      parser.on "-r", "--resolution  <resolution>", PositiveFloat, "raster layer resolution in metres"
+      parser.on "-p", "--path        <path>",       Pathname,      "source data path for layer"
+      parser.on "-a", "--after       <layer>",                     "insert after specified layer"
+      parser.on "-b", "--before      <layer>",                     "insert before specified layer"
+      parser.on "-c", "--replace     <layer>",                     "replace specified layer"
+      parser.on "-o", "--overwrite",                               "overwrite layer if it already exists"
+
+    when "contours"
+      parser.banner = <<~EOF
+        *nswtopo* *contours* - add contours from elevation data
+          usage: _nswtopo_ _contours_ [~options~] <map.tgz> <dem.zip>
+      EOF
+      parser.on "-i", "--interval       <interval>", PositiveInt,   "contour interval in metres (default %s)" % NSWTopo::Contour::DEFAULTS["interval"]
+      parser.on "-x", "--index          <index>",    PositiveInt,   "index interval in metres"
+      parser.on "-s", "--smooth         <radius>",   NonNegFloat,   "DEM smoothing radius in mm (default %s)" % NSWTopo::Contour::DEFAULTS["smooth"]
+      parser.on "-t", "--thin",                                     "thin intermediate contours in steep areas"
+      # parser.on "-d", "--density        <density>",  PositiveFloat, "maximum lines/mm before thinning occurs"
+      # parser.on "-m", "--min-length     <length>",   PositiveFloat, "minimum length before contour thinning in mm"
+      parser.on       "--no-depression",                            "don't show or clean depression contours"
+      parser.on "-k", "--knolls         <size>",     NonNegFloat,   "minimum knoll size in mm (default %s)" % NSWTopo::Contour::DEFAULTS["knolls"]
+      parser.on "-a", "--after          <layer>",                   "insert after specified layer"
+      parser.on "-b", "--before         <layer>",                   "insert before specified layer"
+      parser.on "-c", "--replace        <layer>",                   "replace specified layer"
+      parser.on       "--stroke         <colour>",   Colour,        "stroke colour (name or RGB triplet)"
+      parser.on       "--stroke-width   <width>",    PositiveFloat, "stroke width in mm"
+      parser.on       "--fill           <colour>",   Colour,        "label colour (defaults to stroke colour)"
+
+    when "spot-heights"
+      parser.banner = <<~EOF
+        *nswtopo* *spot-heights* - add spot heights from elevation data
+          usage: _nswtopo_ _spot-heights_ [~options~] <map.tgz> <dem.zip>
+      EOF
+      parser.on "-s", "--smooth   <radius>",         NonNegFloat,        "DEM smoothing radius in mm (default %s)" % NSWTopo::Spot::DEFAULTS["smooth"]
+      parser.on       "--spacing  <spacing>",        PositiveFloat,      "minimum spot spacing in mm (default %i)" % NSWTopo::Spot::DEFAULTS["spacing"]
+      parser.on "-p", "--prefer   <knolls|saddles>", %w[knolls saddles], "preferred spot locations"
+      parser.on "-a", "--after    <layer>",                              "insert after specified layer"
+      parser.on "-b", "--before   <layer>",                              "insert before specified layer"
+      parser.on "-c", "--replace  <layer>",                              "replace specified layer"
+
+    when "relief"
+      parser.banner = <<~EOF
+        *nswtopo* *relief* - add shaded relief
+          usage: _nswtopo_ _relief_ [~options~] <map.tgz> <dem.zip>
+      EOF
+      parser.on "-r", "--resolution  <resolution>", PositiveFloat, "resolution in metres (default %i)" % NSWTopo::Relief::DEFAULTS["resolution"]
+      parser.on "-o", "--opacity     <opacity>",    Opacity,       "opacity (default %s)" % NSWTopo::Relief::DEFAULTS["opacity"]
+      parser.on "-a", "--altitude    <altitude>",   AltitudeAngle, "altitude angle in degrees (default %i)" % NSWTopo::Relief::DEFAULTS["altitude"]
+      parser.on "-z", "--azimuth     <azimuth>",    Float,         "azimuth in degrees (default %i)" % NSWTopo::Relief::DEFAULTS["azimuth"]
+      parser.on "-s", "--sources     <sources>",    PositiveInt,   "number of light sources (default %i)" % NSWTopo::Relief::DEFAULTS["sources"]
+      parser.on "-y", "--yellow      <fraction>",   Opacity,       "yellow illumination as a fraction",
+                                                                   "of shading (default %s)" % NSWTopo::Relief::DEFAULTS["yellow"]
+      parser.on "-f", "--factor      <factor>",     PositiveFloat, "exaggeration factor (default %s)" % NSWTopo::Relief::DEFAULTS["factor"]
+
+    when "grid"
+      parser.banner = <<~EOF
+        *nswtopo* *grid* - add UTM grid
+          usage: _nswtopo_ _grid_ [~options~] <map.tgz>
+      EOF
+      parser.on "-i", "--interval  <interval>", PositiveFloat, "interval between grid lines in",
+                                                               "metres (default %i)" % NSWTopo::Grid::DEFAULTS["interval"]
+
+    when "declination"
+      parser.banner = <<~EOF
+        *nswtopo* *declination* - add magnetic declination lines
+          usage: _nswtopo_ _declination_ [~options~] <map.tgz>
+      EOF
+      parser.on "-a", "--angle    <angle>",   Float,         "magnetic declination in clockwise degrees",
+                                                             "(calculated automatically by default)"
+      parser.on "-s", "--spacing  <spacing>", PositiveFloat, "spacing of lines in mm (default %i)" % NSWTopo::Declination::DEFAULTS["spacing"]
+      parser.on "-o", "--offset   <offset>",  Float,         "rightwards offset of lines in mm"
+      parser.on "-r", "--arrows   <arrows>",  PositiveFloat, "spacing of arrows in mm (default %i)" % NSWTopo::Declination::DEFAULTS["arrows"]
+      parser.on       "--stroke   <colour>",  Colour,        "stroke colour (name or RGB triplet)"
+
+    when "controls"
+      parser.banner = <<~EOF
+        *nswtopo* *controls* - add rogaine control markers
+          usage: _nswtopo_ _controls_ [~options~] <map.tgz> <controls.gpx>
+      EOF
+      parser.on "-d", "--diameter   <diameter>",  PositiveFloat, "diameter of markers in mm (default %s)" % NSWTopo::Control::DEFAULTS["diameter"]
+      parser.on "-s", "--spot",                                  "add spots at centres"
+      parser.on "-c", "--colour     <colour>",    Colour,        "colour of markers and labels",
+                                                                 "(name or RGB triplet)"
+      parser.on "-f", "--font-size  <font-size>", PositiveFloat, "font size for labels in mm"
+
+    when "overlay"
+      parser.banner = <<~EOF
+        *nswtopo* *overlay* - add KML or GPX overlay
+          usage: _nswtopo_ _overlay_ [~options~] <map.tgz> <overlay.kml>
+      EOF
+      parser.on       "--opacity          <opacity>", Opacity,       "layer opacity (between 0 and 1)"
+      parser.on       "--stroke           <colour>",  Colour,        "stroke colour (name or RGB triplet)"
+      parser.on       "--stroke-width     <width>",   PositiveFloat, "stroke width in mm"
+      parser.on       "--stroke-opacity   <opacity>", Opacity,       "stroke opacity"
+      parser.on       "--stroke-dasharray <mm,...>",  DashArray,     "stroke dash sequence in mm"
+      parser.on       "--stroke-linecap   <butt|round|square>", %w[butt round square],
+                                                                     "stroke linecap value"
+      parser.on       "--fill             <colour>",  Colour,        "polygon fill colour"
+      parser.on       "--fill-opacity     <opacity>", Opacity,       "polygon fill opacity"
+      parser.on "-s", "--simplify",                                  "apply track simplification"
+      parser.on "-t", "--tolerance        <metres>",  PositiveFloat, "track simplifiction tolerance in metres",
+                                                                     "(scale-appropriate value used by default)"
+      parser.on "-a", "--after            <layer>",                  "insert after specified layer"
+      parser.on "-b", "--before           <layer>",                  "insert before specified layer"
+      parser.on "-c", "--replace          <layer>",                  "replace specified layer"
+
+    when "delete"
+      parser.banner = <<~EOF
+        *nswtopo* *delete* - delete map layers
+          usage: _nswtopo_ _delete_ [~options~] <map.tgz> <layer> [<layer> ...]
+      EOF
+
+    when "render"
+      parser.banner = <<~EOF
+        *nswtopo* *render* - render map in various formats
+          usage: _nswtopo_ _render_ [~options~] <map.tgz> [<format-or-path> ...]
+          formats: #{NSWTopo::Formats.extensions.sort.join ?\s}
+          default: svg
+      EOF
+      parser.on "-p", "--ppi        <ppi>",     PositiveInt, "resolution for raster formats in pixels",
+                                                             "per inch (default %i)" % NSWTopo::Formats::PPI
+      parser.on "-z", "--zoom       <zoom>",    Integer,     "maximum mbtiles zoom level (default %i)" % NSWTopo::Formats::Mbtiles::ZOOM
+      parser.on "-d", "--dither",                            "use indexed colour for raster formats"
+      parser.on "-w", "--worldfile",                         "save additional projection (.prj) and",
+                                                             "world file (.wld) for raster formats"
+      parser.on "-o", "--overwrite",                         "overwrite existing output files"
+      parser.on "-e", "--external   <map.svg>", Pathname,    "render from externally edited SVG"
+      parser.on "-f", "--force",                             "force regeneration of cached SVG"
+
+    when "layers"
+      parser.banner = <<~EOF
+        *nswtopo* *layers* - list available map layers
+          usage: _nswtopo_ _layers_ [~options~]
+      EOF
+
+    when "config"
+      parser.banner = <<~EOF
+        *nswtopo* *config* - configure nswtopo
+          usage: _nswtopo_ _config_ [~options~] [<layer>]
+      EOF
+      parser.on "-d", "--delete        <name>",                      "delete configuration setting"
+      parser.on "-c", "--chrome        <path>",       Pathname,      "set path for Google Chrome"
+      parser.on "-f", "--firefox       <path>",       Pathname,      "set path for Firefox"
+      parser.on "-p", "--path          <path>",       Pathname,      "set path for given layer"
+      parser.on "-r", "--resolution    <resolution>", PositiveFloat, "set resolution for given layer"
+      parser.on       "--layer-dir     <path>",       Pathname,      "set an extra layer directory"
+      parser.on       "--[no-]labelling",                            "enable or disable map labelling"
+
+    when nil
+      raise OptionParser::MissingArgument, "no command specified"
+
+    else
+      raise OptionParser::InvalidArgument, command
+    end
+
+    parser.on "-h", "--help",  "show help for this command" do
+      puts $stdout.tty? ? ansi[parser] : plain[parser]
+      doc = Pathname(__dir__).parent / "docs" / "#{command}.md"
+      puts nil, RDoc::Markdown.parse(doc.read encoding: Encoding::UTF_8).accept(HelpFormatter.new $stdout.tty?)
+    rescue Errno::ENOENT
+    ensure
+      exit
+    end
+  rescue OptionParser::ParseError => error
+    warn ansi[base_parser] if $stderr.tty?
+    raise error.message
+  end
+  command_parser.parse! into: options
+
+  case command
+  when "layers"
+    raise OptionParser::NeedlessArgument, ARGV if ARGV.any?
+    NSWTopo.layers options
+    exit
+  when "config"
+    layer = ARGV.shift
+    raise OptionParser::NeedlessArgument, ARGV if ARGV.any?
+    NSWTopo.config *layer, **options
+    exit
+  end
+
+  raise OptionParser::MissingArgument, "no map path specified" if ARGV.empty?
+  tgz_path = Pathname(ARGV.shift)
+
+  begin
+    in_path = case command
+    when "init"
+      raise "#{tgz_path} already exists" if !options.delete(:overwrite) && tgz_path.exist?
+    else
+      raise "no such file #{tgz_path}" unless tgz_path.exist?
+      raise "#{tgz_path} is not a file" unless tgz_path.file?
+      tgz_path
+    end
+
+    command = command.tr ?-, ?_
+    arity, error = NSWTopo.method(command).arity, nil
+
+    NSWTopo::Archive.open(tgz_path, *in_path) do |archive|
+      args = [archive, *ARGV, options]
+      case
+      when arity >= 0 && args.length > arity
+        raise OptionParser::NeedlessArgument, ARGV.last(args.length - arity).join(?\s)
+      when arity >= 0 ? args.length < arity : args.length + arity + 1 < 0
+        raise OptionParser::MissingArgument
+      end
+
+      NSWTopo.send command, *args
+    rescue NSWTopo::PartialFailureError => error
+    end
+    raise error.message if error
+  end
+rescue OptionParser::ParseError => error
+  warn ansi[command_parser] if $stderr.tty?
+  log_abort error.message
 rescue Interrupt
-  abort "\r\033[KHalting execution. Run the script again to resume."
-ensure
-  duration = Time.now - start
-  minutes, seconds = (duration / 60).floor, (duration % 60).ceil
-  puts "Program completed in %s." % [ ("#{minutes} minute#{?s unless 1 == minutes}" unless 0 == minutes), ("#{seconds} second#{?s unless 1 == seconds}" unless 0 == seconds) ].compact.join(", ")
+  abort $stderr.tty? ? "\r\e[K\e[31mnswtopo:\e[0m interrupted" : "nswtopo: interrupted"
+rescue RuntimeError => error
+  log_abort error.message
 end

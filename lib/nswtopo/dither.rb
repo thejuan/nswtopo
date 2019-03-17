@@ -1,10 +1,9 @@
 module NSWTopo
   module Dither
-    def dither(config, *png_paths)
-      binary = String === config["dither"] ? config["dither"] : config["pngquant"] || config["gimp"] || true
-      case binary
-      when /gimp/i
-        script = %Q[
+    def dither(*png_paths)
+      Enumerator.new do |yielder|
+        yielder << -> { OS.pngquant "--quiet", "--force", "--ext", ".png", "--speed", 1, "--nofs", *png_paths }
+        gimp_script = <<~EOF
           (map
             (lambda (path)
               (let*
@@ -16,17 +15,17 @@ module NSWTopo
                 (gimp-file-save RUN-NONINTERACTIVE image drawable path path)
               )
             )
-            (list "#{png_paths.join '" "'}")
+            (list "#{png_paths.join ?\s}")
           )
-        ]
-        %x["#{binary}" -c -d -f -i -b '#{script}' -b '(gimp-quit TRUE)' #{DISCARD_STDERR}]
-      when /pngquant/i
-        %x["#{binary}" --quiet --force --ext .png "#{png_paths.join '" "'}"]
-      when String
-        abort "Unrecognised dither option: #{binary}"
-      else
-        %x[mogrify -type PaletteBilevelAlpha -dither Riemersma "#{png_paths.join '" "'}"]
-      end if png_paths.any?
+        EOF
+        yielder << -> { OS.gimp "-c", "-d", "-f", "-i", "-b", gimp_script, "-b", "(gimp-quit TRUE)" }
+        yielder << -> { OS.mogrify "-type", "PaletteBilevelAlpha", "-dither", "Riemersma", *png_paths }
+        raise "pngquant, GIMP or ImageMagick required for dithering"
+      end.each do |dither|
+        dither.call
+        break
+      rescue OS::Missing
+      end
     end
   end
 end
